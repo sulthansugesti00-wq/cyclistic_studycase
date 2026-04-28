@@ -1,0 +1,241 @@
+---
+title: "Cyclist study case"
+author: "Sulthan Sugesti"
+date: "2026-03-31"
+output: html_document
+---
+## Introduction
+Cyclistic is a fictional bike sharing company based in Chicago. Their marketing director Lily Moreno believe that the main driving revenue of the company is annual membership. They want me to find how to convert casual riders into annual membership riders. 
+
+### Stakeholders
+- Marketing Director
+- Marketing Staff
+- Analytics team
+
+### Measure of success
+Analyses produce recommendation on how to convert casual into member backed by data.
+
+## Data loading & Preparation
+File below has been merged (1 files for each month for a year).
+``` {r setup, message=FALSE}
+library(pacman)
+p_load(dplyr,readr,lubridate,ggplot2)
+raw_data <- read_csv("combined_cyclist.csv") #Combined 12 csv with bind_rows()
+```
+
+This setup ensures that other device can access it, csv files are in project folder and using `pacman::p_load()` to ensure the packages are downloaded and loaded or loaded if it's already downloaded. This chunk ensures consistency across all compatible devices.
+
+```{r head, message=FALSE}
+bind_rows(
+  raw_data %>% head(2),
+  raw_data %>% tail(2)
+) %>% arrange(started_at)
+```
+As you can see, this is a preview of the data starting from january until december. The whole rows contain 5 million data (5,552,994 to be exact) with 13 columns.
+```{r cols}
+colnames(raw_data)
+```
+
+## Exploratory Analysis
+As the purpose of this analysis is to find how to convert casual into member, I decided not to *Remove* NAs especially on `start_station_name` and `end_station_name` as those two columns in this dataset, one of them can contain NA. If I decided to remove it, the whole rows would be removed and the side that is not NA would be unused. So I decided to only remove the NAs if it's on both sides as partial station data still retains analytical value
+
+## Data cleaning & Preparing analysis
+```{r clean, message=FALSE}
+# remove rows if both side is NA
+clean_data <- raw_data %>%  filter(!(is.na(start_station_name)&is.na(end_station_name)))
+```
+
+This code will remove NA if both station are NA
+
+### Preparing analysis
+The raw dataset contains columns irrelevant to this analysis. Only columns that directly supports business question are retained.
+```{r prep analysis, message=FALSE}
+analysis_data <- clean_data %>% select(member_casual,rideable_type,start_station_name,end_station_name,started_at,ended_at)
+```
+``` {r cols2, message=FALSE}
+colnames(analysis_data)
+```
+
+## Modelling data
+Creating a model to indicate whether a row is considered as "Commuter" or not
+
+### What is a commuter
+Based on assumption commuter meet these criteria
+- Bike ride duration less than 30 minutes.
+- Morning commute window between 6 AM - 8 AM.
+- Evening commute window between 3 PM - 6 PM (Based on casual peak data).
+- Weekday only
+
+### Creating the model
+```{r model, message=FALSE}
+model_data <- analysis_data %>% 
+  mutate(day_of_week=wday(started_at),
+         hour_of_day=hour(started_at), 
+         ride_time=as.numeric(difftime(ended_at, started_at, units = "mins")),                 commuter=if_else(day_of_week %in% 2:6 & (hour_of_day %in% 6:8 | hour_of_day %in% 15:18)&ride_time <30, TRUE, FALSE))
+```
+
+This model flags rider that meet commuter criteria. Used for further analysis
+
+## Behaviour analysis
+This project analyze behavior between casual and member, to find the difference in their behavior to support our digital marketing strategy.
+
+### analyzed behaviour
+- Average ride time between casual and member
+- Location proportion between casual and member
+- Bike type preference between casual and member
+
+## Visualization & Analysis
+This project produces 2 different segment, commuter and general. Commuter uses the commuter flagging criteria while the general uses everything to answer the behaviour analysis and most station traffic.
+```{r commuter proportion, message=FALSE}
+ggplot(model_data, aes(x="All Rides", fill = commuter))+geom_bar(position = "stack", width=0.5)+scale_y_continuous(labels = scales::comma)+
+  scale_fill_manual(
+    labels=c("Non Commuter",
+             "Commuter"),
+    values = c("FALSE"="#BDC3C7",
+               "TRUE"="#2980B9"))+
+  labs(title = "Commuter Proportion",
+       y="Transactions",
+       fill=NULL)+ 
+  theme_minimal()
+```
+
+this graph shows that a portion of cyclistic transaction shows a commuter behavior. This commuter segment has a higher chance of turning into member due to their routine of going to work.
+
+### Bike type preference
+Finding insight on bike preference will support digital marketing strategy and aim for more niche segment
+
+#### General
+```{r bike pref general, message=FALSE}
+clean_data %>% select(rideable_type, member_casual) %>% group_by(rideable_type, member_casual) %>% 
+  ggplot(aes(x=rideable_type, fill = member_casual))+geom_bar(width=0.7)+scale_y_continuous(labels = scales::comma)+
+  scale_fill_manual(
+    values = c("casual"="#E67E22",
+               "member"="#2980B9"))+
+  labs(title = "General Bike preference",
+       y="Transactions",
+       x="Bike Type",
+       fill=NULL)+
+  scale_x_discrete(labels= c("classic_bike"="Classic Bike",
+                          "electric_bike"="Electric Bike"))+ 
+  theme_minimal()
+```
+
+As plotted above, the general casual riders prefered electric bike whether it's for commuting to work or regular bike riding. This insight might be beneficial for digital marketing strategy to promote "Eco-Ride". 
+
+#### Commuter
+```{r bike general, message=FALSE}
+model_data %>% filter(commuter==TRUE) %>%  select(rideable_type, member_casual) %>% group_by(rideable_type, member_casual) %>% 
+  ggplot(aes(x=rideable_type, fill = member_casual))+geom_bar(width=0.7)+scale_y_continuous(labels = scales::comma)+
+  scale_fill_manual(values = c("casual"="#E67E22",
+                               "member"="#2980B9"))+
+  labs(title = "Commuter bike preference",
+       y="Transactions",
+       x="Bike Type",
+       fill=NULL)+
+  scale_x_discrete(labels= c("classic_bike"="Classic Bike",
+                          "electric_bike"="Electric Bike"))+ 
+  theme_minimal()
+```
+
+A considerable amount of Casual-commuter also prefer electric bike
+
+### Average ride duration
+Average ride duration provides further insight into the difference behavior of casual rider and member rider. This insight could help the company to gain a better understanding of their customer
+
+#### Commuter
+```{r avg ride duration, message=FALSE}
+model_data %>% filter(commuter==TRUE) %>%  group_by(member_casual) %>% summarise(average=mean(ride_time)) %>% ggplot(aes(x=member_casual, y=average, fill = member_casual))+geom_col(width=0.6)+
+  scale_fill_manual(
+    values = c("casual"="#E67E22",
+               "member"= "#2980B9"))+
+  labs(title = "Average Commuter ride duration",
+       y="Ride Duration (mins)",
+       x=NULL,
+       fill=NULL)+ 
+  theme_minimal()
+```
+
+Above graph is the average commuter ride time of casual and member. Casual average ride duration is 11 minutes, while member are 10 minutes, this proves even further that most casual have the same behaviour as those that are member but doesn't buy the membership. 
+
+As sidenote, the general average ride duration for casual is 24 minutes and member 12 minutes. This proves even further that member ride duration are shorter with an assumption that they are member because they have a routine possibly going to work or for a quick workout ride.
+
+### Commuter Rider type distribution across top station
+Understanding where commuter riders congregate geographically reveals high value advertising location and supports geotargeted digital marketing effort.
+```{r top station, message=FALSE}
+#add comment 
+top_station <- model_data %>% filter(commuter==TRUE, !is.na(start_station_name)) %>% group_by(start_station_name) %>% count() %>% arrange(desc(n)) %>% head(10) %>% pull(start_station_name)
+
+```
+Above code is used to pull the top 10 highest traffic station for then be used on next code chunk.
+
+```{r rider loc dist, message=FALSE}
+#Add commen?
+model_data %>% filter(commuter==TRUE, !is.na(start_station_name), start_station_name%in%top_station) %>% group_by(start_station_name, member_casual) %>% count() %>% ggplot(aes(x=reorder(start_station_name,n),y=n,fill = member_casual))+geom_col(width=0.6)+coord_flip()+
+  scale_fill_manual(values = c("casual"="#E67E22",
+                               "member"="#2980B9")) + 
+  labs(title = "Top 10 highest commuter station",
+       fill=NULL,
+       x= "Transactions",
+       y= "Station Name")+ 
+  theme_minimal()
+```
+
+Above graph shows the most traffic from commuter model. This insight shows which station are the best spot for advertising in term of traffic. By placing advertising within these station, the traffic of said advertising would increased due to high foot traffic.
+
+### Average ride count per day
+This analysis examine average ride count a day based on general dataset. The goal of this analysis is to determine rider behaviour especially casual.
+```{r avg ride count per day, message=FALSE}
+model_data %>% mutate(day_name=wday(started_at, label = TRUE),
+                      week_of_year=week(started_at)) %>% group_by(day_name,week_of_year, member_casual) %>% count() %>% group_by(day_name, member_casual) %>% summarise(Average_rider_count=mean(n)) %>% ggplot(aes(x=day_name, y=Average_rider_count, fill = member_casual))+geom_col(width=0.6)+
+  scale_fill_manual(values = c("casual"="#E67E22",
+                               "member"="#2980B9")) + 
+  labs(title="Average ride transaction per day",
+       fill=NULL,
+       y= "Transactions",
+       x=NULL) + 
+  theme_minimal()
+```
+
+This graph shows average ride transaction of each day for the whole year. The three most highest with casual proportion transaction day are Sunday, Friday and Saturday. Saturday has the most proportion of casual comparing to the rest of the week, which means casual rider are more active at Saturday, this will be beneficial for targeted digital marketing.
+
+### Average rider count per hour
+Peak hour pattern across all rider inform the optimal timing for digital marketing strategy.
+```{r avg rider count per hour, message=FALSE}
+# This uses general not commuter. Cause commuter have their specified time
+model_data %>% 
+mutate(week_of_year=week(started_at)) %>% 
+group_by(hour_of_day,
+         week_of_year,
+         member_casual) %>%
+count() %>% 
+group_by(hour_of_day, 
+         member_casual) %>% 
+summarise(average_rider=mean(n)) %>% 
+ggplot(aes(x=hour_of_day,y=average_rider, fill = member_casual))+geom_col(width=0.6)+
+  scale_fill_manual(values = c("casual"="#E67E22",
+                               "member"="#2980B9")) +
+  labs(title="Commuter peak hours",
+       y="Transactions",
+       x="Time of day",
+       fill=NULL) + theme_minimal()
+```
+
+Above is a graph of commuter model peak hours. The highest transaction with the highest proportion of casual are 4 PM, 5 PM, 6 PM. The highest is 5 PM. This gives us insight on our customer behaviour, most of them are more active at those hours, and if we want to target casual we should put those advertising within those 3 time of the day to have more casual traffic in our advertising.
+
+## Key findings & Recommendation
+
+### Key findings
+1. Around 32 percent of 2025 transactions are commuter based on model with assumption 
+2. Cannot identify rider bike type preference due to electric bike consist of 60% of the whole fleet.
+3. 3 Highest average ride with casual proportion are Friday, Saturday, and Sunday with Saturday having the most casual proportion. 
+4. 3 highest commuter station are, Clinton St & Washington Blvd, Kingsbury St & Kinzie St, Canal St& Madison St
+5. Peak hour for commuters are 4 PM - 6 PM, with 5PM having the highest casual proportion than the rest 
+
+### Recommendation
+This analysis recommends a two pronged digital marketing strategy
+
+First, Weekday commuter targeting. Among peak hour riders, 350,000 casual riders exhibit member behavior that needs to commute. Targeting these riders at top station during 15:00 - 18:00 on weekdays with messages to converse casual into member would be a high quality conversion opportunity
+
+Second, weekend awareness campaign. Weekend traffic shows the highest casual proportion. Broader awareness campaign during weekends will maximize casual rider exposure to membership promotions.
+
+Should a combined conversion rates of 10% be achieved across both strategy, this translates to 1,144 new annual membership.
